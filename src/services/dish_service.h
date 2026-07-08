@@ -18,7 +18,7 @@ public:
         auto db = acquireDb();
 
         std::ostringstream sql;
-        sql << "SELECT d.id, d.merchant_id, d.category_id, d.name as dish_name, d.image, d.description, "
+        sql << "SELECT d.id, d.merchant_id, d.category_id, d.name, d.image, d.description, "
             << "d.price, d.stock, d.status, d.sort_weight, d.create_time, "
             << "c.name as category_name "
             << "FROM dish d "

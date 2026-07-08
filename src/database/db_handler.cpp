@@ -410,8 +410,9 @@ namespace TakeAwayPlatform
              */
             for (uint32_t index = 1; index <= colCount; ++index) 
             {
-                // 获取当前列的名字（如 "id", "name", "price"）
-                std::string column_name = meta->getColumnName(index);
+                // 使用 getColumnLabel 获取别名（如 c.name as category_name 返回 category_name）
+                // getColumnName 返回原始列名会导致别名丢失，同名列互相覆盖
+                std::string column_name = meta->getColumnLabel(index);
 
                 /*
                  * 根据列的数据类型，用不同的方式读取数据

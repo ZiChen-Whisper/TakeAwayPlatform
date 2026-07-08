@@ -47,7 +47,7 @@ public:
         int cartId = getOrCreateCart(acquireDb, userId);
 
         Json::Value items = db->queryPrepared(
-            "SELECT ci.id, ci.dish_id, ci.quantity, ci.dish_price, d.name as dish_name, d.image "
+            "SELECT ci.id, ci.dish_id, ci.quantity, ci.dish_price, d.name, d.image "
             "FROM cart_item ci JOIN dish d ON ci.dish_id = d.id "
             "WHERE ci.cart_id = ?",
             {std::to_string(cartId)});
