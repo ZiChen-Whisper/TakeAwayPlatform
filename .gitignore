@@ -1,44 +1,71 @@
-# Build directories
+# ============================================================
+# .gitignore 文件的作用：
+# 告诉 Git（版本控制工具）哪些文件/文件夹不需要上传到代码仓库
+# 
+# 为什么要忽略某些文件？
+# 1. 编译产物（如 .o、.exe）：这些是生成的文件，换台电脑重新编译就行
+# 2. 第三方库的编译缓存：体积大，且和具体电脑环境相关
+# 3. IDE 配置文件：每个人用的编辑器不同，不应强制统一
+# 4. 日志文件和敏感配置：包含密码等敏感信息，不应泄露
+# 
+# Git 忽略规则语法（小白必看）：
+# - # 开头的是注释行（Git 会忽略这一行）
+# - / 结尾表示匹配文件夹（不是文件）
+# - * 是通配符，匹配任意字符（如 *.log 匹配所有 .log 结尾的文件）
+# - 每行一条规则
+# ============================================================
+
+# ---------- 编译生成的目录 ----------
+# build/ 是 CMake 编译时生成的文件夹，包含所有编译中间文件
+# 体积很大（几百MB），而且可以随时重新生成，不需要上传
 build/
-cmake-build-*/
-out/
+cmake-build-*/     # CLion 等 IDE 生成的编译目录，* 匹配任意后缀
+out/               # 一些 IDE 的默认输出目录
 
-# Object files
-*.o
-*.obj
-*.lo
-*.la
-*.a
-*.so
-*.dylib
+# ---------- 编译产生的目标文件（Object Files）----------
+# C/C++ 源码 .cpp 编译后会先生成 .o（目标文件），再链接成可执行文件
+# .o 文件是中间产物，不需要上传
+*.o                # Linux 下的目标文件
+*.obj              # Windows 下的目标文件
+*.lo               # libtool 生成的库目标文件
+*.la               # libtool 生成的静态库描述文件
+*.a                # Linux 静态库文件（如 libxxx.a）
+*.so               # Linux 动态库文件（shared object，类似 Windows 的 DLL）
+*.dylib            # macOS 动态库文件
 
-# Executables
-*.exe
-*.out
-*.app
+# ---------- 最终生成的可执行文件 ----------
+*.exe              # Windows 可执行程序
+*.out              # Linux 下用 gcc/g++ 默认生成的可执行文件名（a.out）
+*.app              # macOS 应用程序包
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
+# ---------- IDE 编辑器生成的配置文件 ----------
+.vscode/           # VS Code 的项目配置目录
+.idea/             # JetBrains 系列 IDE（CLion、IntelliJ）的项目配置
+*.swp              # Vim 编辑器的临时交换文件（用于崩溃恢复）
+*.swo              # Vim 的另一个临时文件
+*~                 # 某些编辑器的备份文件（文件名以波浪号结尾）
+.DS_Store          # macOS 系统自动生成的文件夹元数据文件
 
-# CMake
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-Makefile
+# ---------- CMake 构建系统的缓存文件 ----------
+CMakeCache.txt     # CMake 的缓存，记录上次配置的结果（如变量值、路径等）
+CMakeFiles/        # CMake 生成的大量中间文件目录
+cmake_install.cmake # CMake 生成的安装脚本
+Makefile           # CMake 生成的 Makefile（编译规则文件，make 命令用）
 
-# Dependency libraries (downloaded/built)
-lib/cpp-httplib/build/
-lib/jsoncpp/build/
-lib/mysql-connector/build/
+# ---------- 第三方库的编译目录 ----------
+# 这些是项目中依赖的三个第三方库的编译输出
+# 第三方库的源码在 lib/ 下，但编译产物不需要上传
+lib/cpp-httplib/build/       # cpp-httplib（HTTP库）的编译目录
+lib/jsoncpp/build/           # jsoncpp（JSON解析库）的编译目录
+lib/mysql-connector/build/   # MySQL Connector（数据库连接库）的编译目录
+lib/mysql-connector/lib/     # MySQL Connector 的二进制库文件（.so/.a），体积大且环境相关
 
-# Logs
+# ---------- 日志文件 ----------
+# 程序运行产生的日志文件不应上传（包含运行时信息，可能含敏感数据）
 *.log
 
-# Environment/Config with secrets
+# ---------- 敏感配置文件 ----------
+# config.json.local 可能包含本地密码等敏感信息，不应提交
+# .env 是常见的环境变量文件，通常含密钥
 config/config.json.local
 .env
