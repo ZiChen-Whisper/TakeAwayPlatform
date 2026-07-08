@@ -488,7 +488,7 @@ Content-Type: application/json
 
 #### TC-084：设置默认地址
 ```
-PUT {{baseUrl}}/api/addresses/2/default
+PUT {{baseUrl}}/api/addresses/default/2
 Authorization: Bearer {{userToken}}
 ```
 **预期：** `{"code":200, "message":"设置成功"}`  
@@ -588,21 +588,21 @@ Authorization: Bearer {{userToken}}
 
 #### TC-102：商家确认接单
 ```
-PUT {{baseUrl}}/api/merchant/orders/1/accept
+PUT {{baseUrl}}/api/merchant/orders/accept/1
 Authorization: Bearer {{merchantToken}}
 ```
 **预期：** `{"code":200, "data":{"status":2, "statusName":"配送中"}}`
 
 #### TC-103：商家标记完成
 ```
-PUT {{baseUrl}}/api/merchant/orders/1/complete
+PUT {{baseUrl}}/api/merchant/orders/complete/1
 Authorization: Bearer {{merchantToken}}
 ```
 **预期：** `{"code":200, "data":{"status":3, "statusName":"已完成"}}`
 
 #### TC-104：对已完成订单再次操作（异常测试）
 ```
-PUT {{baseUrl}}/api/merchant/orders/1/accept
+PUT {{baseUrl}}/api/merchant/orders/accept/1
 Authorization: Bearer {{merchantToken}}
 ```
 **预期：** `{"code":400, "message":"当前状态不允许接单"}`
@@ -627,7 +627,7 @@ Authorization: Bearer {{adminToken}}
 
 #### TC-112：冻结用户
 ```
-PUT {{baseUrl}}/api/admin/users/1/status
+PUT {{baseUrl}}/api/admin/users/status/1
 Authorization: Bearer {{adminToken}}
 Content-Type: application/json
 
@@ -640,7 +640,7 @@ Content-Type: application/json
 
 #### TC-113：解冻用户
 ```
-PUT {{baseUrl}}/api/admin/users/1/status
+PUT {{baseUrl}}/api/admin/users/status/1
 Authorization: Bearer {{adminToken}}
 Content-Type: application/json
 
@@ -659,7 +659,7 @@ Authorization: Bearer {{adminToken}}
 
 #### TC-115：审核商家（通过）
 ```
-PUT {{baseUrl}}/api/admin/merchants/1/audit
+PUT {{baseUrl}}/api/admin/merchants/audit/1
 Authorization: Bearer {{adminToken}}
 Content-Type: application/json
 

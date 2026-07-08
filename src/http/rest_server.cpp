@@ -879,7 +879,7 @@ namespace TakeAwayPlatform
         });
 
         // PUT /api/addresses/{id}/default - 设为默认
-        server.Put(R"(/api/addresses/(\d+)/default)", [this](const httplib::Request& req, httplib::Response& res) {
+        server.Put(R"(/api/addresses/default/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
             Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
             if (payload.isNull()) return;
 
@@ -979,46 +979,56 @@ namespace TakeAwayPlatform
             res.set_content(resp.toStyledString(), "application/json");
         });
 
-        // PUT /api/merchant/orders/{id}/accept - 商家接单
-        server.Put(R"(/api/merchant/orders/(\d+)/accept)", [this](const httplib::Request& req, httplib::Response& res) {
-            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
-            if (payload.isNull()) return;
-            if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
+        // PUT /api/merchant/orders/accept/{id} - 商家接单（regex在末尾）
+        server.Put(R"(/api/merchant/orders/accept/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
+            try {
+                Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+                if (payload.isNull()) return;
+                if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
 
-            int orderId = std::stoi(req.matches[1]);
-            int userId = payload["user_id"].asInt();
-            auto db = acquire_db_handler();
-            Json::Value merchant = db->queryPrepared(
-                "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
-            if (merchant.size() == 0) {
-                Json::Value err = errorResponse(403, "您不是商家");
+                int orderId = std::stoi(req.matches[1]);
+                int userId = payload["user_id"].asInt();
+                auto db = acquire_db_handler();
+                Json::Value merchant = db->queryPrepared(
+                    "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
+                if (merchant.size() == 0) {
+                    Json::Value err = errorResponse(403, "您不是商家");
+                    res.set_content(err.toStyledString(), "application/json");
+                    return;
+                }
+                Json::Value resp = OrderService::acceptOrder(
+                    [this]() { return acquire_db_handler(); }, merchant[0]["id"].asInt(), orderId);
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(500, std::string("服务器错误: ") + e.what());
                 res.set_content(err.toStyledString(), "application/json");
-                return;
             }
-            Json::Value resp = OrderService::acceptOrder(
-                [this]() { return acquire_db_handler(); }, merchant[0]["id"].asInt(), orderId);
-            res.set_content(resp.toStyledString(), "application/json");
         });
 
-        // PUT /api/merchant/orders/{id}/complete - 商家完成
-        server.Put(R"(/api/merchant/orders/(\d+)/complete)", [this](const httplib::Request& req, httplib::Response& res) {
-            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
-            if (payload.isNull()) return;
-            if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
+        // PUT /api/merchant/orders/complete/{id} - 商家完成（regex在末尾）
+        server.Put(R"(/api/merchant/orders/complete/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
+            try {
+                Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+                if (payload.isNull()) return;
+                if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
 
-            int orderId = std::stoi(req.matches[1]);
-            int userId = payload["user_id"].asInt();
-            auto db = acquire_db_handler();
-            Json::Value merchant = db->queryPrepared(
-                "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
-            if (merchant.size() == 0) {
-                Json::Value err = errorResponse(403, "您不是商家");
+                int orderId = std::stoi(req.matches[1]);
+                int userId = payload["user_id"].asInt();
+                auto db = acquire_db_handler();
+                Json::Value merchant = db->queryPrepared(
+                    "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
+                if (merchant.size() == 0) {
+                    Json::Value err = errorResponse(403, "您不是商家");
+                    res.set_content(err.toStyledString(), "application/json");
+                    return;
+                }
+                Json::Value resp = OrderService::completeOrder(
+                    [this]() { return acquire_db_handler(); }, merchant[0]["id"].asInt(), orderId);
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(500, std::string("服务器错误: ") + e.what());
                 res.set_content(err.toStyledString(), "application/json");
-                return;
             }
-            Json::Value resp = OrderService::completeOrder(
-                [this]() { return acquire_db_handler(); }, merchant[0]["id"].asInt(), orderId);
-            res.set_content(resp.toStyledString(), "application/json");
         });
 
         // ==========================================
@@ -1046,7 +1056,7 @@ namespace TakeAwayPlatform
         });
 
         // PUT /api/admin/users/{id}/status - 冻结/解冻用户
-        server.Put(R"(/api/admin/users/(\d+)/status)", [this](const httplib::Request& req, httplib::Response& res) {
+        server.Put(R"(/api/admin/users/status/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
             Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
             if (payload.isNull()) return;
             if (!AuthMiddleware::requireRole(payload, res, {2})) return;
@@ -1080,7 +1090,7 @@ namespace TakeAwayPlatform
         });
 
         // PUT /api/admin/merchants/{id}/audit - 审核商家
-        server.Put(R"(/api/admin/merchants/(\d+)/audit)", [this](const httplib::Request& req, httplib::Response& res) {
+        server.Put(R"(/api/admin/merchants/audit/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
             Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
             if (payload.isNull()) return;
             if (!AuthMiddleware::requireRole(payload, res, {2})) return;
