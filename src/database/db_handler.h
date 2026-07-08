@@ -18,8 +18,11 @@
 #include "common.h"              // 我们自己的公共头文件（包含 DBConfig 结构体定义）
 #include <mysql_connection.h>    // MySQL 连接类（sql::Connection）
 #include <cppconn/statement.h>   // SQL 语句执行类（sql::Statement）
+#include <cppconn/prepared_statement.h>  // 预编译语句
 #include <cppconn/resultset.h>   // 查询结果集类（sql::ResultSet）
 #include <memory>                // C++ 智能指针（std::unique_ptr）
+#include <vector>                // std::vector
+#include <string>                // std::string
 
 
 namespace TakeAwayPlatform
@@ -34,8 +37,11 @@ namespace TakeAwayPlatform
      * 主要功能：
      * 1. 连接数据库
      * 2. 执行查询并返回 JSON 结果
-     * 3. 检查连接状态
-     * 4. 断线重连
+     * 3. 执行 INSERT/UPDATE/DELETE
+     * 4. 预编译语句（防止SQL注入）
+     * 5. 事务支持
+     * 6. 检查连接状态
+     * 7. 断线重连
      */
     class DatabaseHandler 
     {
@@ -53,34 +59,59 @@ namespace TakeAwayPlatform
         DatabaseHandler(const DBConfig& config);
 
         /*
-         * 【执行 SQL 查询】
+         * 【执行 SQL 查询（SELECT）】
          * 
          * 参数：const std::string& sql —— 要执行的 SQL 语句
          * 返回值：Json::Value —— 查询结果（JSON 数组格式）
-         * 
-         * 例如：
-         * 输入 "SELECT * FROM menu_items"
-         * 输出 [{id:1, name:"宫保鸡丁", price:28.0}, {id:2, name:"鱼香肉丝", price:25.0}]
-         * 
-         * 注意：返回值是 JSON 数组（每行是一个 JSON 对象）
          */
         Json::Value query(const std::string& sql);
 
         /*
+         * 【执行 SQL 更新（INSERT/UPDATE/DELETE）】
+         * 
+         * 参数：const std::string& sql —— SQL 语句
+         * 返回值：int —— 影响的行数
+         */
+        int execute(const std::string& sql);
+
+        /*
+         * 【执行预编译查询（SELECT）】
+         * 
+         * 参数：sql —— 带 ? 占位符的 SQL
+         *       params —— 参数值列表（全部以字符串传递，MySQL自动类型转换）
+         * 返回值：Json::Value —— 查询结果
+         */
+        Json::Value queryPrepared(const std::string& sql, const std::vector<std::string>& params);
+
+        /*
+         * 【执行预编译更新（INSERT/UPDATE/DELETE）】
+         * 
+         * 参数：sql —— 带 ? 占位符的 SQL
+         *       params —— 参数值列表
+         * 返回值：int —— 影响的行数
+         */
+        int executePrepared(const std::string& sql, const std::vector<std::string>& params);
+
+        /*
+         * 【事务控制】
+         */
+        void beginTransaction();   // 开启事务
+        void commit();              // 提交事务
+        void rollback();            // 回滚事务
+
+        /*
+         * 【获取最后插入的自增ID】
+         * 返回值：int64_t —— 自增ID值
+         */
+        int64_t getLastInsertId();
+
+        /*
          * 【检查是否已连接】
-         * 
-         * const 放在函数后面表示这是一个"常量成员函数"
-         * 意思：调用这个函数不会修改对象的任何成员变量
-         * 
-         * 返回值：true = 已连接，false = 未连接/已断开
          */
         bool is_connected() const;
 
         /*
          * 【重新连接数据库】
-         * 
-         * 当数据库断开后（网络波动、数据库重启等），调用此函数重新连接
-         * 内部流程：断开旧连接 → 使用保存的配置重新连接
          */
         void reconnect();
 

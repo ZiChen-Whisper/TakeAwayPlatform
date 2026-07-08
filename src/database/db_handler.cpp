@@ -56,61 +56,141 @@ namespace TakeAwayPlatform
      */
     Json::Value DatabaseHandler::query(const std::string& sql) 
     {
-        try  // try 块：可能出错的代码放这里
+        try
         {
-            // 调试输出：打印正在执行的 SQL 语句
-            // 实际生产环境应该用日志系统而非直接 cout
             std::cout << "DatabaseHandler::query sql:" << sql << std::endl;
-            std::cout.flush();  // 强制刷新输出缓冲区，确保立即输出到终端
+            std::cout.flush();
 
-            /*
-             * std::unique_ptr<sql::Statement> stmt(connection->createStatement());
-             *
-             * 逐词解释：
-             * - std::unique_ptr<sql::Statement>  智能指针类型（独占式，自动释放内存）
-             * - stmt                               变量名
-             * - connection->createStatement()      通过数据库连接创建 Statement 对象
-             *   -> 是"指针成员访问运算符"
-             *   等价于：(*connection).createStatement()
-             *
-             * Statement（语句对象）的作用：
-             * 它是向数据库发送 SQL 语句的"信使"
-             * 就像快递员，负责把你的 SQL 送到数据库，并把结果带回来
-             */
             std::unique_ptr<sql::Statement> stmt(connection->createStatement());
-
-            /*
-             * std::unique_ptr<sql::ResultSet> result(stmt->executeQuery(sql));
-             *
-             * executeQuery(sql) 执行 SQL 查询语句
-             * 返回 ResultSet（结果集），包含查询到的所有数据行
-             *
-             * 注意：executeQuery 只能用于 SELECT 语句（查询）
-             * 如果是 INSERT/UPDATE/DELETE，应该用 executeUpdate()
-             *
-             * ResultSet 就像一个"表格"，有行有列
-             * 初始时游标在第一行之前，需要用 next() 移动到第一行
-             */
             std::unique_ptr<sql::ResultSet> result(stmt->executeQuery(sql));
-
-            /*
-             * result.get() 获取智能指针内部的原始指针
-             * parse_result 函数需要原始指针 sql::ResultSet* 作为参数
-             *
-             * get() 不会释放所有权，所有权仍在 unique_ptr 中
-             * 函数返回后，unique_ptr 自动 delete 掉 ResultSet 对象
-             */
             return parse_result(result.get());
         } 
-        catch (const sql::SQLException& e)  // 捕获 MySQL 相关的异常
+        catch (const sql::SQLException& e)
         {
-            // 打印错误信息到标准错误输出
-            // e.what() 获取异常的描述信息（如 "Access denied for user..."）
             std::cerr << "Database error: " << e.what() << std::endl;
-
-            // 返回一个空的 JSON 对象 {}
-            // Json::objectValue 告诉 jsoncpp 创建的是一个对象（不是数组等）
             return Json::Value(Json::objectValue);
+        }
+    }
+
+    // 执行 INSERT/UPDATE/DELETE，返回影响行数
+    int DatabaseHandler::execute(const std::string& sql)
+    {
+        try
+        {
+            std::cout << "DatabaseHandler::execute sql:" << sql << std::endl;
+            std::cout.flush();
+
+            std::unique_ptr<sql::Statement> stmt(connection->createStatement());
+            return stmt->executeUpdate(sql);
+        }
+        catch (const sql::SQLException& e)
+        {
+            std::cerr << "Database execute error: " << e.what() << std::endl;
+            return -1;
+        }
+    }
+
+    // 预编译查询（SELECT）
+    Json::Value DatabaseHandler::queryPrepared(const std::string& sql, const std::vector<std::string>& params)
+    {
+        try
+        {
+            std::cout << "DatabaseHandler::queryPrepared sql:" << sql << std::endl;
+            std::cout.flush();
+
+            std::unique_ptr<sql::PreparedStatement> pstmt(connection->prepareStatement(sql));
+            for (size_t i = 0; i < params.size(); ++i) {
+                pstmt->setString(i + 1, params[i]);
+            }
+            std::unique_ptr<sql::ResultSet> result(pstmt->executeQuery());
+            return parse_result(result.get());
+        }
+        catch (const sql::SQLException& e)
+        {
+            std::cerr << "Database queryPrepared error: " << e.what() << std::endl;
+            return Json::Value(Json::objectValue);
+        }
+    }
+
+    // 预编译更新（INSERT/UPDATE/DELETE）
+    int DatabaseHandler::executePrepared(const std::string& sql, const std::vector<std::string>& params)
+    {
+        try
+        {
+            std::cout << "DatabaseHandler::executePrepared sql:" << sql << std::endl;
+            std::cout.flush();
+
+            std::unique_ptr<sql::PreparedStatement> pstmt(connection->prepareStatement(sql));
+            for (size_t i = 0; i < params.size(); ++i) {
+                pstmt->setString(i + 1, params[i]);
+            }
+            return pstmt->executeUpdate();
+        }
+        catch (const sql::SQLException& e)
+        {
+            std::cerr << "Database executePrepared error: " << e.what() << std::endl;
+            return -1;
+        }
+    }
+
+    // 事务控制
+    void DatabaseHandler::beginTransaction()
+    {
+        try
+        {
+            connection->setAutoCommit(false);
+            std::cout << "Transaction started." << std::endl;
+        }
+        catch (const sql::SQLException& e)
+        {
+            std::cerr << "beginTransaction error: " << e.what() << std::endl;
+        }
+    }
+
+    void DatabaseHandler::commit()
+    {
+        try
+        {
+            connection->commit();
+            connection->setAutoCommit(true);
+            std::cout << "Transaction committed." << std::endl;
+        }
+        catch (const sql::SQLException& e)
+        {
+            std::cerr << "commit error: " << e.what() << std::endl;
+        }
+    }
+
+    void DatabaseHandler::rollback()
+    {
+        try
+        {
+            connection->rollback();
+            connection->setAutoCommit(true);
+            std::cout << "Transaction rolled back." << std::endl;
+        }
+        catch (const sql::SQLException& e)
+        {
+            std::cerr << "rollback error: " << e.what() << std::endl;
+        }
+    }
+
+    // 获取最后插入的自增ID
+    int64_t DatabaseHandler::getLastInsertId()
+    {
+        try
+        {
+            std::unique_ptr<sql::Statement> stmt(connection->createStatement());
+            std::unique_ptr<sql::ResultSet> result(stmt->executeQuery("SELECT LAST_INSERT_ID()"));
+            if (result->next()) {
+                return result->getInt64(1);
+            }
+            return 0;
+        }
+        catch (const sql::SQLException& e)
+        {
+            std::cerr << "getLastInsertId error: " << e.what() << std::endl;
+            return -1;
         }
     }
 

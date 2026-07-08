@@ -15,6 +15,16 @@
 
 #include "rest_server.h"  // 本文件对应的头文件
 
+// 服务层头文件
+#include "user_service.h"
+#include "dish_service.h"
+#include "category_service.h"
+#include "cart_service.h"
+#include "address_service.h"
+#include "order_service.h"
+#include "auth_middleware.h"
+#include "response_utils.h"
+
 
 namespace TakeAwayPlatform
 {
@@ -43,6 +53,12 @@ namespace TakeAwayPlatform
         // 初始化数据库连接池（使用配置中的 "database" 部分）
         // config["database"] 获取 JSON 中 database 键对应的子对象
         init_db_pool(config["database"]);
+
+        // 读取 JWT 配置
+        if (config.isMember("jwt")) {
+            jwtSecret_ = config["jwt"].get("secret", "default-secret").asString();
+            jwtExpireHours_ = config["jwt"].get("expire_hours", 24).asInt();
+        }
 
         std::cout << "RestServer instance created." << std::endl;
         std::cout.flush();
@@ -422,219 +438,722 @@ namespace TakeAwayPlatform
      */
     void RestServer::setup_routes() 
     {
-        /*
-         * 【路由 1：根路径 GET /】
-         *
-         * 访问 http://localhost:9090/ 时返回欢迎信息
-         *
-         * lambda 捕获列表 [](...)：空列表，不需要访问外部变量
-         *
-         * 参数名用了占位（未命名）：const httplib::Request&
-         * 因为我们不需要使用 Request 对象，只需要 Response
-         * 不给参数名可以避免"未使用变量"的编译器警告
-         *
-         * res.set_content("内容", "内容类型")
-         * "text/plain" 表示纯文本
-         * 其他常见类型：
-         *   "text/html"        HTML 网页
-         *   "application/json" JSON 数据
-         *   "image/png"        PNG 图片
-         */
+        // ==========================================
+        // 公共路由
+        // ==========================================
         server.Get("/", [](const httplib::Request&, httplib::Response& res) {
             res.set_content("TakeAwayPlatform is running!", "text/plain");
         });
         
-        /*
-         * 【路由 2：健康检查 GET /health】
-         *
-         * 健康检查是什么？
-         * 运维人员/监控系统定期访问这个接口，确认服务是否正常
-         * 如果返回 "OK" 说明服务正常，"SHUTTING_DOWN" 说明正在关闭
-         *
-         * 这个接口也常用于负载均衡器（如 Nginx）
-         * 负载均衡器定期检查后端服务是否健康，不健康就停止转发流量
-         *
-         * [this] 捕获 this 指针，因为需要访问 is_running() 和 stopRequested
-         */
         server.Get("/health", [this](const httplib::Request&, httplib::Response& res) {
             if (this->is_running() && !this->stopRequested) {
                 res.set_content("OK", "text/plain");
             } else {
                 res.set_content("SHUTTING_DOWN", "text/plain");
-                /*
-                 * res.status = 503;
-                 *
-                 * HTTP 状态码（Status Code）：
-                 * 200 = OK          请求成功
-                 * 404 = Not Found   资源不存在
-                 * 500 = Internal Server Error  服务器内部错误
-                 * 503 = Service Unavailable    服务暂时不可用
-                 *
-                 * 这里返回 503 告诉客户端/负载均衡器：
-                 * "我还在，但现在不能处理请求"
-                 */
-                res.status = 503; // Service Unavailable
+                res.status = 503;
             }
         });
 
-        /*
-         * 【路由 3：获取菜单 GET /menu】
-         *
-         * 访问 http://localhost:9090/menu 返回所有菜品
-         *
-         * 这个路由使用线程池异步处理：
-         * HTTP 请求来了 → 生成任务 → 丢进线程池 → 响应
-         * 避免阻塞 HTTP 处理线程
-         *
-         * [&] 捕获列表：按引用捕获所有外部变量
-         * 需要访问 threadPool 成员
-         */
-        server.Get("/menu", [&](const httplib::Request&, httplib::Response& res) 
-        {
-            /*
-             * threadPool.enqueue([this, &res] { ... });
-             *
-             * 把处理任务丢进线程池
-             * enqueue 后 HTTP 处理函数就返回了（非阻塞）
-             * 线程池中的工作线程会实际执行数据库查询和响应设置
-             *
-             * 警告：[&res] 按引用捕获 res 有风险！
-             * 因为 enqueue 返回后，HTTP 处理函数就结束了
-             * res 可能被销毁，这时工作线程再访问 res 就出问题
-             * 
-             * 正确的做法应该用 shared_ptr 延长生命周期（见 /order 路由的做法）
-             */
-            threadPool.enqueue([this, &res] {
-                // 从连接池获取一个数据库连接
-                auto db_handler = acquire_db_handler();
+        // ==========================================
+        // 阶段一：用户与鉴权模块
+        // ==========================================
 
-                // 执行 SQL 查询，获取菜单数据
-                // SELECT * FROM menu_items 意思是"查询 menu_items 表的所有行和列"
-                Json::Value menu = db_handler->query("SELECT * FROM menu_items");
-
-                // 归还数据库连接到池中（好借好还~）
-                release_db_handler(std::move(db_handler));
-                
-                // 设置 HTTP 响应内容
-                // toStyledString() 把 JSON 对象转成格式化的字符串（带缩进和换行）
-                res.set_content(menu.toStyledString(), "application/json");
-            });
+        // POST /api/user/register - 用户注册
+        server.Post("/api/user/register", [this](const httplib::Request& req, httplib::Response& res) {
+            try {
+                Json::Value body = parse_json(req.body);
+                Json::Value resp = UserService::registerUser(
+                    [this]() { return acquire_db_handler(); }, body, jwtSecret_);
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
         });
 
-        /*
-         * 【路由 4：创建订单 POST /order】
-         *
-         * 访问 POST http://localhost:9090/order 
-         * 请求体（body）中包含 JSON 格式的订单数据
-         *
-         * 这个路由展示了正确的异步处理方式：
-         * 使用 std::packaged_task + std::future 在线程池中执行，
-         * 然后等待结果返回
-         *
-         * std::packaged_task 是什么？
-         * 它把"可调用对象"包装成一个"异步任务"
-         * 可以通过 get_future() 获取一个 future 对象
-         * future 对象可以在以后获取任务的返回值
-         *
-         * 类比：你点外卖
-         * - packaged_task = 餐厅接到订单（任务被包装好）
-         * - future = 外卖订单号（你可以凭借它获取结果）
-         * - future.get() = 外卖送到（你拿到结果）
-         */
-        server.Post("/order", [&](const httplib::Request& req, httplib::Response& res) 
-        {
-            /*
-             * auto task_ptr = std::make_shared<std::packaged_task<std::string()>>(...)
-             *
-             * 拆解这个复杂声明：
-             * - std::make_shared<T>(...) 创建 shared_ptr<T>（共享智能指针）
-             * - T = std::packaged_task<std::string()>
-             *   packaged_task 的模板参数 <std::string()> 表示：
-             *   这个任务返回 std::string，不接收参数
-             *
-             * 为什么用 make_shared 而非 unique_ptr？
-             * 因为 lambda 中捕获了 task_ptr，enqueue 的线程也需要 task_ptr
-             * 两个地方都需要持有它，只能用 shared_ptr（共享所有权）
-             *
-             * [this, body = req.body] 捕获列表：
-             * - this: 访问成员函数
-             * - body = req.body: 按值捕获 req.body（复制一份，免得 req 被销毁后访问出错）
-             */
-            auto task_ptr = std::make_shared<std::packaged_task<std::string()>>([this, body = req.body]() {
-                std::cout << "/order request body: " << body << std::endl;
-
-                // 解析 HTTP 请求体中的 JSON 数据
-                Json::Value order = parse_json(body);
-
-                // 从 JSON 中提取订单信息
-                // asString() 把 JSON 值转为字符串
-                // asDouble() 把 JSON 值转为浮点数
-                std::string userName = order["user_name"].asString();
-                std::string orderId = order["order_id"].asString();
-                std::string productName = order["product_name"].asString();
-                double price = order["price"].asDouble();
-
-                // 调试输出
-                std::cout << "/order userName: " << userName << std::endl;
-                std::cout << "/order orderId: " << orderId << std::endl;
-                std::cout << "/order productName: " << productName << std::endl;
-                std::cout << "/order price: " << price << std::endl;
-
-                // todo：数据库处理
-                // 目前只是原样返回订单数据，没有存入数据库
-
-                // 构建响应 JSON
-                Json::Value response;
-                response["user_name"] = userName;
-                response["orderId"] = orderId;
-                response["productName"] = productName;
-                response["price"] = price;
-                std::cout << "/order response: " << response.toStyledString() <<std::endl;
-                
-                return response.toStyledString();  // 返回 JSON 字符串
-            });
-
-            /*
-             * result_future = task_ptr->get_future();
-             *
-             * 从 packaged_task 获取一个 future 对象
-             * future 就是"未来会有的结果"
-             * 当任务执行完毕后，可以通过 future.get() 获取返回值
-             */
-            std::future<std::string> result_future = task_ptr->get_future();
-
-            /*
-             * 将任务投入线程池执行
-             *
-             * [task_ptr] { (*task_ptr)(); }
-             * - 捕获 task_ptr 的 shared_ptr 副本
-             * - (*task_ptr)() 调用 packaged_task，执行里面的任务
-             *
-             * 由于 task_ptr 是 shared_ptr，当它被线程池的 lambda 捕获后
-             * 引用计数 +1，确保任务对象在所有持有者释放前不会被销毁
-             */
-            threadPool.enqueue([task_ptr] {
-                (*task_ptr)();  // 执行订单处理任务
-            });
-
-            // 等待任务执行完毕，获取结果
+        // POST /api/user/login - 用户登录
+        server.Post("/api/user/login", [this](const httplib::Request& req, httplib::Response& res) {
             try {
-                /*
-                 * std::string result = result_future.get();
-                 *
-                 * future.get() 阻塞当前线程，直到任务执行完毕
-                 * 如果任务抛出了异常，get() 会重新抛出该异常
-                 * 
-                 * 注意：get() 只能调用一次！
-                 * 第二次调用会抛出 std::future_error 异常
-                 */
-                std::string result = result_future.get();
-                std::cout << "/order task result: " << result << std::endl;
-                res.set_content(result, "application/json");
+                Json::Value body = parse_json(req.body);
+                Json::Value resp = UserService::login(
+                    [this]() { return acquire_db_handler(); }, body, jwtSecret_, jwtExpireHours_);
+                res.set_content(resp.toStyledString(), "application/json");
             } catch (const std::exception& e) {
-                // 任务执行出错
-                res.status = 500;  // Internal Server Error
-                res.set_content("{\"error\":\"" + std::string(e.what()) + "\"}", "application/json");
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
+        });
+
+        // GET /api/user/profile - 获取个人信息
+        server.Get("/api/user/profile", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            int userId = payload["user_id"].asInt();
+            Json::Value resp = UserService::getProfile(
+                [this]() { return acquire_db_handler(); }, userId);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // PUT /api/user/profile - 修改个人信息
+        server.Put("/api/user/profile", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            try {
+                Json::Value body = parse_json(req.body);
+                int userId = payload["user_id"].asInt();
+                Json::Value resp = UserService::updateProfile(
+                    [this]() { return acquire_db_handler(); }, userId, body);
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
+        });
+
+        // ==========================================
+        // 阶段二：菜品与分类模块
+        // ==========================================
+
+        // GET /api/dishes - 搜索/筛选菜品
+        server.Get("/api/dishes", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            int categoryId = req.has_param("categoryId") ? std::stoi(req.get_param_value("categoryId")) : 0;
+            std::string keyword = req.has_param("keyword") ? req.get_param_value("keyword") : "";
+            int page = req.has_param("page") ? std::stoi(req.get_param_value("page")) : 1;
+            int pageSize = req.has_param("pageSize") ? std::stoi(req.get_param_value("pageSize")) : 10;
+
+            Json::Value resp = DishService::searchDishes(
+                [this]() { return acquire_db_handler(); }, categoryId, keyword, page, pageSize);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // GET /api/dishes/{id} - 菜品详情
+        server.Get(R"(/api/dishes/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            int dishId = std::stoi(req.matches[1]);
+            Json::Value resp = DishService::getDishDetail(
+                [this]() { return acquire_db_handler(); }, dishId);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // GET /api/categories - 分类列表
+        server.Get("/api/categories", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            int merchantId = req.has_param("merchantId") ? std::stoi(req.get_param_value("merchantId")) : 0;
+            Json::Value resp = CategoryService::getCategories(
+                [this]() { return acquire_db_handler(); }, merchantId);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // 商家端：POST /api/merchant/dishes - 新增菜品
+        server.Post("/api/merchant/dishes", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
+
+            try {
+                Json::Value body = parse_json(req.body);
+                int userId = payload["user_id"].asInt();
+                // 查询商家ID
+                auto db = acquire_db_handler();
+                Json::Value merchant = db->queryPrepared(
+                    "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
+                if (merchant.size() == 0) {
+                    Json::Value err = errorResponse(403, "您不是商家");
+                    res.set_content(err.toStyledString(), "application/json");
+                    return;
+                }
+                int merchantId = merchant[0]["id"].asInt();
+                Json::Value resp = DishService::addDish(
+                    [this]() { return acquire_db_handler(); }, merchantId, body);
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
+        });
+
+        // 商家端：PUT /api/merchant/dishes/{id} - 修改菜品
+        server.Put(R"(/api/merchant/dishes/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
+
+            try {
+                Json::Value body = parse_json(req.body);
+                int dishId = std::stoi(req.matches[1]);
+                int userId = payload["user_id"].asInt();
+                auto db = acquire_db_handler();
+                Json::Value merchant = db->queryPrepared(
+                    "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
+                if (merchant.size() == 0) {
+                    Json::Value err = errorResponse(403, "您不是商家");
+                    res.set_content(err.toStyledString(), "application/json");
+                    return;
+                }
+                Json::Value resp = DishService::updateDish(
+                    [this]() { return acquire_db_handler(); }, dishId, merchant[0]["id"].asInt(), body);
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
+        });
+
+        // 商家端：DELETE /api/merchant/dishes/{id} - 删除菜品
+        server.Delete(R"(/api/merchant/dishes/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
+
+            int dishId = std::stoi(req.matches[1]);
+            int userId = payload["user_id"].asInt();
+            auto db = acquire_db_handler();
+            Json::Value merchant = db->queryPrepared(
+                "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
+            if (merchant.size() == 0) {
+                Json::Value err = errorResponse(403, "您不是商家");
+                res.set_content(err.toStyledString(), "application/json");
+                return;
+            }
+            Json::Value resp = DishService::deleteDish(
+                [this]() { return acquire_db_handler(); }, dishId, merchant[0]["id"].asInt());
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // 商家端：PATCH /api/merchant/dishes/{id}/status - 上下架
+        server.Patch(R"(/api/merchant/dishes/(\d+)/status)", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
+
+            try {
+                Json::Value body = parse_json(req.body);
+                int dishId = std::stoi(req.matches[1]);
+                int status = body["status"].asInt();
+                int userId = payload["user_id"].asInt();
+                auto db = acquire_db_handler();
+                Json::Value merchant = db->queryPrepared(
+                    "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
+                if (merchant.size() == 0) {
+                    Json::Value err = errorResponse(403, "您不是商家");
+                    res.set_content(err.toStyledString(), "application/json");
+                    return;
+                }
+                Json::Value resp = DishService::setDishStatus(
+                    [this]() { return acquire_db_handler(); }, dishId, merchant[0]["id"].asInt(), status);
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
+        });
+
+        // 商家端：GET /api/merchant/dishes - 商家菜品列表
+        server.Get("/api/merchant/dishes", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
+
+            int userId = payload["user_id"].asInt();
+            auto db = acquire_db_handler();
+            Json::Value merchant = db->queryPrepared(
+                "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
+            if (merchant.size() == 0) {
+                Json::Value err = errorResponse(403, "您不是商家");
+                res.set_content(err.toStyledString(), "application/json");
+                return;
+            }
+            int categoryId = req.has_param("categoryId") ? std::stoi(req.get_param_value("categoryId")) : 0;
+            int page = req.has_param("page") ? std::stoi(req.get_param_value("page")) : 1;
+            int pageSize = req.has_param("pageSize") ? std::stoi(req.get_param_value("pageSize")) : 10;
+
+            Json::Value resp = DishService::getMerchantDishes(
+                [this]() { return acquire_db_handler(); }, merchant[0]["id"].asInt(), categoryId, page, pageSize);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // 商家端：GET /api/merchant/categories - 商家分类列表
+        server.Get("/api/merchant/categories", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
+
+            int userId = payload["user_id"].asInt();
+            auto db = acquire_db_handler();
+            Json::Value merchant = db->queryPrepared(
+                "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
+            if (merchant.size() == 0) {
+                Json::Value err = errorResponse(403, "您不是商家");
+                res.set_content(err.toStyledString(), "application/json");
+                return;
+            }
+            Json::Value resp = CategoryService::getMerchantCategories(
+                [this]() { return acquire_db_handler(); }, merchant[0]["id"].asInt());
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // 商家端：POST /api/merchant/categories - 新增分类
+        server.Post("/api/merchant/categories", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
+
+            try {
+                Json::Value body = parse_json(req.body);
+                int userId = payload["user_id"].asInt();
+                auto db = acquire_db_handler();
+                Json::Value merchant = db->queryPrepared(
+                    "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
+                if (merchant.size() == 0) {
+                    Json::Value err = errorResponse(403, "您不是商家");
+                    res.set_content(err.toStyledString(), "application/json");
+                    return;
+                }
+                Json::Value resp = CategoryService::addCategory(
+                    [this]() { return acquire_db_handler(); }, merchant[0]["id"].asInt(), body);
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
+        });
+
+        // 商家端：PUT /api/merchant/categories/{id} - 修改分类
+        server.Put(R"(/api/merchant/categories/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
+
+            try {
+                Json::Value body = parse_json(req.body);
+                int categoryId = std::stoi(req.matches[1]);
+                int userId = payload["user_id"].asInt();
+                auto db = acquire_db_handler();
+                Json::Value merchant = db->queryPrepared(
+                    "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
+                if (merchant.size() == 0) {
+                    Json::Value err = errorResponse(403, "您不是商家");
+                    res.set_content(err.toStyledString(), "application/json");
+                    return;
+                }
+                Json::Value resp = CategoryService::updateCategory(
+                    [this]() { return acquire_db_handler(); }, categoryId, merchant[0]["id"].asInt(), body);
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
+        });
+
+        // ==========================================
+        // 阶段三：购物车模块
+        // ==========================================
+
+        // GET /api/cart - 获取购物车
+        server.Get("/api/cart", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            int userId = payload["user_id"].asInt();
+            Json::Value resp = CartService::getCart(
+                [this]() { return acquire_db_handler(); }, userId);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // POST /api/cart/add - 加入购物车
+        server.Post("/api/cart/add", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            try {
+                Json::Value body = parse_json(req.body);
+                int userId = payload["user_id"].asInt();
+                Json::Value resp = CartService::addToCart(
+                    [this]() { return acquire_db_handler(); }, userId, body);
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
+        });
+
+        // PUT /api/cart/item/{id} - 修改购物车数量
+        server.Put(R"(/api/cart/item/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            try {
+                Json::Value body = parse_json(req.body);
+                int itemId = std::stoi(req.matches[1]);
+                int userId = payload["user_id"].asInt();
+                Json::Value resp = CartService::updateQuantity(
+                    [this]() { return acquire_db_handler(); }, userId, itemId, body);
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
+        });
+
+        // DELETE /api/cart/item/{id} - 移出购物车
+        server.Delete(R"(/api/cart/item/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            int itemId = std::stoi(req.matches[1]);
+            int userId = payload["user_id"].asInt();
+            Json::Value resp = CartService::removeItem(
+                [this]() { return acquire_db_handler(); }, userId, itemId);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // ==========================================
+        // 阶段四：地址簿模块
+        // ==========================================
+
+        // GET /api/addresses - 地址列表
+        server.Get("/api/addresses", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            int userId = payload["user_id"].asInt();
+            Json::Value resp = AddressService::getAddresses(
+                [this]() { return acquire_db_handler(); }, userId);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // POST /api/addresses - 新增地址
+        server.Post("/api/addresses", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            try {
+                Json::Value body = parse_json(req.body);
+                int userId = payload["user_id"].asInt();
+                Json::Value resp = AddressService::addAddress(
+                    [this]() { return acquire_db_handler(); }, userId, body);
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
+        });
+
+        // PUT /api/addresses/{id} - 修改地址
+        server.Put(R"(/api/addresses/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            try {
+                Json::Value body = parse_json(req.body);
+                int addressId = std::stoi(req.matches[1]);
+                int userId = payload["user_id"].asInt();
+                Json::Value resp = AddressService::updateAddress(
+                    [this]() { return acquire_db_handler(); }, userId, addressId, body);
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
+        });
+
+        // DELETE /api/addresses/{id} - 删除地址
+        server.Delete(R"(/api/addresses/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            int addressId = std::stoi(req.matches[1]);
+            int userId = payload["user_id"].asInt();
+            Json::Value resp = AddressService::deleteAddress(
+                [this]() { return acquire_db_handler(); }, userId, addressId);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // PUT /api/addresses/{id}/default - 设为默认
+        server.Put(R"(/api/addresses/(\d+)/default)", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            int addressId = std::stoi(req.matches[1]);
+            int userId = payload["user_id"].asInt();
+            Json::Value resp = AddressService::setDefault(
+                [this]() { return acquire_db_handler(); }, userId, addressId);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // ==========================================
+        // 阶段五：订单与支付模块
+        // ==========================================
+
+        // POST /api/orders - 提交订单
+        server.Post("/api/orders", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            try {
+                Json::Value body = parse_json(req.body);
+                int userId = payload["user_id"].asInt();
+                Json::Value resp = OrderService::createOrder(
+                    [this]() { return acquire_db_handler(); }, userId, body);
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
+        });
+
+        // POST /api/orders/{id}/pay - 模拟支付
+        server.Post(R"(/api/orders/(\d+)/pay)", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            int orderId = std::stoi(req.matches[1]);
+            int userId = payload["user_id"].asInt();
+            Json::Value resp = OrderService::mockPayment(
+                [this]() { return acquire_db_handler(); }, userId, orderId);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // GET /api/orders - 用户订单列表
+        server.Get("/api/orders", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            int userId = payload["user_id"].asInt();
+            int status = req.has_param("status") ? std::stoi(req.get_param_value("status")) : -1;
+            int page = req.has_param("page") ? std::stoi(req.get_param_value("page")) : 1;
+            int pageSize = req.has_param("pageSize") ? std::stoi(req.get_param_value("pageSize")) : 10;
+
+            Json::Value resp = OrderService::getUserOrders(
+                [this]() { return acquire_db_handler(); }, userId, status, page, pageSize);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // GET /api/orders/{id} - 订单详情
+        server.Get(R"(/api/orders/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+
+            int orderId = std::stoi(req.matches[1]);
+            int userId = payload["user_id"].asInt();
+            Json::Value resp = OrderService::getOrderDetail(
+                [this]() { return acquire_db_handler(); }, userId, orderId);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // ==========================================
+        // 阶段六：商家端订单处理模块
+        // ==========================================
+
+        // GET /api/merchant/orders - 商家订单列表
+        server.Get("/api/merchant/orders", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
+
+            int userId = payload["user_id"].asInt();
+            auto db = acquire_db_handler();
+            Json::Value merchant = db->queryPrepared(
+                "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
+            if (merchant.size() == 0) {
+                Json::Value err = errorResponse(403, "您不是商家");
+                res.set_content(err.toStyledString(), "application/json");
+                return;
+            }
+
+            int status = req.has_param("status") ? std::stoi(req.get_param_value("status")) : -1;
+            int page = req.has_param("page") ? std::stoi(req.get_param_value("page")) : 1;
+            int pageSize = req.has_param("pageSize") ? std::stoi(req.get_param_value("pageSize")) : 10;
+
+            Json::Value resp = OrderService::getMerchantOrders(
+                [this]() { return acquire_db_handler(); }, merchant[0]["id"].asInt(), status, page, pageSize);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // PUT /api/merchant/orders/{id}/accept - 商家接单
+        server.Put(R"(/api/merchant/orders/(\d+)/accept)", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
+
+            int orderId = std::stoi(req.matches[1]);
+            int userId = payload["user_id"].asInt();
+            auto db = acquire_db_handler();
+            Json::Value merchant = db->queryPrepared(
+                "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
+            if (merchant.size() == 0) {
+                Json::Value err = errorResponse(403, "您不是商家");
+                res.set_content(err.toStyledString(), "application/json");
+                return;
+            }
+            Json::Value resp = OrderService::acceptOrder(
+                [this]() { return acquire_db_handler(); }, merchant[0]["id"].asInt(), orderId);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // PUT /api/merchant/orders/{id}/complete - 商家完成
+        server.Put(R"(/api/merchant/orders/(\d+)/complete)", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {1, 2})) return;
+
+            int orderId = std::stoi(req.matches[1]);
+            int userId = payload["user_id"].asInt();
+            auto db = acquire_db_handler();
+            Json::Value merchant = db->queryPrepared(
+                "SELECT id FROM merchant WHERE user_id = ?", {std::to_string(userId)});
+            if (merchant.size() == 0) {
+                Json::Value err = errorResponse(403, "您不是商家");
+                res.set_content(err.toStyledString(), "application/json");
+                return;
+            }
+            Json::Value resp = OrderService::completeOrder(
+                [this]() { return acquire_db_handler(); }, merchant[0]["id"].asInt(), orderId);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // ==========================================
+        // 阶段七：管理端模块
+        // ==========================================
+
+        // GET /api/admin/users - 管理员查看用户列表
+        server.Get("/api/admin/users", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {2})) return;
+
+            int page = req.has_param("page") ? std::stoi(req.get_param_value("page")) : 1;
+            int pageSize = req.has_param("pageSize") ? std::stoi(req.get_param_value("pageSize")) : 20;
+
+            auto db = acquire_db_handler();
+            Json::Value list = db->queryPrepared(
+                "SELECT id, username, phone, role, status, create_time FROM user ORDER BY id DESC LIMIT ? OFFSET ?",
+                {std::to_string(pageSize), std::to_string((page - 1) * pageSize)});
+            Json::Value data;
+            data["list"] = list;
+            data["page"] = page;
+            Json::Value resp = successResponse(data);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // PUT /api/admin/users/{id}/status - 冻结/解冻用户
+        server.Put(R"(/api/admin/users/(\d+)/status)", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {2})) return;
+
+            try {
+                Json::Value body = parse_json(req.body);
+                int userId = std::stoi(req.matches[1]);
+                int status = body["status"].asInt();
+                auto db = acquire_db_handler();
+                db->executePrepared("UPDATE user SET status = ? WHERE id = ?",
+                                    {std::to_string(status), std::to_string(userId)});
+                Json::Value resp = successResponse(std::string("操作成功"));
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
+        });
+
+        // GET /api/admin/merchants - 商家审核列表
+        server.Get("/api/admin/merchants", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {2})) return;
+
+            auto db = acquire_db_handler();
+            Json::Value list = db->query(
+                "SELECT m.*, u.username FROM merchant m JOIN user u ON m.user_id = u.id ORDER BY m.create_time DESC");
+            Json::Value resp = successResponse(list);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // PUT /api/admin/merchants/{id}/audit - 审核商家
+        server.Put(R"(/api/admin/merchants/(\d+)/audit)", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {2})) return;
+
+            try {
+                Json::Value body = parse_json(req.body);
+                int merchantId = std::stoi(req.matches[1]);
+                int status = body["status"].asInt(); // 1=通过, 3=拒绝
+                auto db = acquire_db_handler();
+                db->executePrepared("UPDATE merchant SET status = ? WHERE id = ?",
+                                    {std::to_string(status), std::to_string(merchantId)});
+                Json::Value resp = successResponse(std::string("审核完成"));
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
+            }
+        });
+
+        // GET /api/admin/dashboard - 数据看板
+        server.Get("/api/admin/dashboard", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {2})) return;
+
+            auto db = acquire_db_handler();
+            Json::Value todayOrders = db->query(
+                "SELECT COUNT(*) as cnt FROM `order` WHERE DATE(create_time) = CURDATE()");
+            Json::Value todayRevenue = db->query(
+                "SELECT COALESCE(SUM(total_amount),0) as total FROM `order` WHERE DATE(create_time) = CURDATE() AND status IN(1,2,3)");
+            Json::Value activeUsers = db->query(
+                "SELECT COUNT(*) as cnt FROM user WHERE DATE(create_time) = CURDATE()");
+
+            Json::Value data;
+            data["todayOrders"] = todayOrders.size() > 0 ? todayOrders[0]["cnt"] : 0;
+            data["todayRevenue"] = todayRevenue.size() > 0 ? todayRevenue[0]["total"] : 0;
+            data["todayNewUsers"] = activeUsers.size() > 0 ? activeUsers[0]["cnt"] : 0;
+            Json::Value resp = successResponse(data);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // GET /api/admin/config - 系统配置
+        server.Get("/api/admin/config", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {2})) return;
+
+            auto db = acquire_db_handler();
+            Json::Value configs = db->query("SELECT config_key, config_value FROM system_config");
+            Json::Value resp = successResponse(configs);
+            res.set_content(resp.toStyledString(), "application/json");
+        });
+
+        // PUT /api/admin/config - 修改系统配置
+        server.Put("/api/admin/config", [this](const httplib::Request& req, httplib::Response& res) {
+            Json::Value payload = AuthMiddleware::authenticate(req, res, jwtSecret_);
+            if (payload.isNull()) return;
+            if (!AuthMiddleware::requireRole(payload, res, {2})) return;
+
+            try {
+                Json::Value body = parse_json(req.body);
+                std::string key = body["config_key"].asString();
+                std::string value = body["config_value"].asString();
+                auto db = acquire_db_handler();
+                db->executePrepared(
+                    "INSERT INTO system_config (config_key, config_value) VALUES (?, ?) "
+                    "ON DUPLICATE KEY UPDATE config_value = VALUES(config_value)",
+                    {key, value});
+                Json::Value resp = successResponse(std::string("配置更新成功"));
+                res.set_content(resp.toStyledString(), "application/json");
+            } catch (const std::exception& e) {
+                Json::Value err = errorResponse(400, e.what());
+                res.set_content(err.toStyledString(), "application/json");
             }
         });
     }
@@ -706,278 +1225,4 @@ namespace TakeAwayPlatform
 
         return root;  // 返回解析好的 JSON 对象
     }
-}  // namespace TakeAwayPlatform 结束#include <iostream>
-#include <thread>
-#include <future>
-
-#include "rest_server.h"
-
-
-namespace TakeAwayPlatform
-{
-    RestServer::RestServer(const std::string& configPath) : threadPool(std::thread::hardware_concurrency()) 
-    {
-        std::cout << "RestServer starting." << std::endl;
-        std::cout.flush();
-        logger.info("RestServer::RestServer starting");
-
-        Json::Value config = load_config(configPath);
-
-        std::cout << "RestServer load config success." << std::endl;
-        std::cout.flush();
-        
-        // 初始化数据库连接池
-        init_db_pool(config["database"]);
-
-        std::cout << "RestServer instance created." << std::endl;
-        std::cout.flush();
-    }
-
-    RestServer::~RestServer() 
-    {
-        stop();
-    }
-
-    void RestServer::start(int port) 
-    {
-        if (isRunning) {
-            std::cerr << "Server is already running." << std::endl;
-            std::cout.flush();
-            return;
-        }
-        
-        isRunning = true;
-        stopRequested = false;
-        
-        // 成员变量保存线程
-        serverThread = std::thread([this, port] {
-            this->run_server(port);
-        });
-        
-        std::cout << "Server starting on port " << port << "..." << std::endl;
-        std::cout.flush();
-    }
-
-    void RestServer::run_server(int port) 
-    {
-        try 
-        {
-            // 设置路由
-            setup_routes();
-            
-            std::cout << "HTTP server listening on port " << port << std::endl;
-            std::cout.flush();
-
-            if (!server.listen("0.0.0.0", port)) {
-                std::cerr << "Failed to start server on port " << port << std::endl;
-            }
-            
-            std::cout << "HTTP server exited listen loop." << std::endl;
-        } 
-        catch (const std::exception& e) 
-        {
-            std::cerr << "Server error in worker thread: " << e.what() << std::endl;
-            std::cout.flush();
-        }
-        
-        // 服务器已停止，更新状态
-        isRunning = false;
-        
-        // 通知等待的线程
-        stopCv.notify_one();
-        std::cout << "Server worker thread exiting." << std::endl;
-        std::cout.flush();
-    }
-
-    void RestServer::stop() 
-    {
-        if (!isRunning) {
-            std::cout << "Server already stop." << std::endl;
-            std::cout.flush();
-            return;
-        }
-        
-        std::cout << "Requesting server stop..." << std::endl;
-        std::cout.flush();
-        stopRequested = true;
-        
-        // 通知服务器停止
-        server.stop();
-        
-        // 等待服务器实际停止
-        std::unique_lock<std::mutex> lock(stopMtx);
-        if (stopCv.wait_for(lock, std::chrono::seconds(5), [this] {
-            return !isRunning;
-        }))
-        {
-            if (serverThread.joinable()) 
-            {
-                serverThread.join();
-            }
-
-            std::cout << "Server stopped successfully." << std::endl;
-            std::cout.flush();
-        } 
-        else 
-        {
-            std::cerr << "Warning: Server did not stop within timeout." << std::endl;
-            std::cout.flush();
-
-            if (serverThread.joinable()) 
-            {
-                serverThread.detach(); // 最后手段，避免死锁
-            }
-        }
-
-        // 清理数据库连接池
-        std::lock_guard<std::mutex> dbLock(dbPoolMutex);
-        while (!dbPool.empty()) {
-            dbPool.pop();
-        }
-    }
-
-    bool RestServer::is_running() const 
-    { 
-        return isRunning;
-    }
-
-    void RestServer::init_db_pool(const Json::Value& config) 
-    {
-        std::cout << "host: " << config["host"].asString() << std::endl;
-        std::cout << "port: " << config["port"].asInt() << std::endl;
-        std::cout << "user: " << config["user"].asString() << std::endl;
-        std::cout << "password: " << config["password"].asString() << std::endl;
-        std::cout << "name: " << config["name"].asString() << std::endl;
-        std::cout.flush();
-        
-        int pool_size = config.get("pool_size", 10).asInt();
-
-        dbConfig.push_back({
-            config["host"].asString(),
-            config["port"].asInt(),
-            config["user"].asString(),
-            config["password"].asString(),
-            config["name"].asString()
-        });
-
-        for (int index = 0; index < pool_size; ++index) {
-            dbPool.push(create_db_handler());
-        }
-    }
-
-    std::unique_ptr<DatabaseHandler> RestServer::create_db_handler() 
-    {
-        return std::make_unique<DatabaseHandler>(dbConfig[0]);
-    }
-
-    std::unique_ptr<DatabaseHandler> RestServer::acquire_db_handler() 
-    {
-        std::lock_guard<std::mutex> lock(dbPoolMutex);
-        if (dbPool.empty()) {
-            return create_db_handler();
-        }
-        
-        auto handler = std::move(dbPool.front());
-        dbPool.pop();
-        return handler;
-    }
-
-    void RestServer::release_db_handler(std::unique_ptr<DatabaseHandler> handler) 
-    {
-        std::lock_guard<std::mutex> lock(dbPoolMutex);
-        dbPool.push(std::move(handler));
-    }
-
-    void RestServer::setup_routes() 
-    {
-        // 设置路由
-        server.Get("/", [](const httplib::Request&, httplib::Response& res) {
-            res.set_content("TakeAwayPlatform is running!", "text/plain");
-        });
-        
-        server.Get("/health", [this](const httplib::Request&, httplib::Response& res) {
-            if (this->is_running() && !this->stopRequested) {
-                res.set_content("OK", "text/plain");
-            } else {
-                res.set_content("SHUTTING_DOWN", "text/plain");
-                res.status = 503; // Service Unavailable
-            }
-        });
-
-        // 示例路由：获取所有菜品（使用线程池处理）
-        server.Get("/menu", [&](const httplib::Request&, httplib::Response& res) 
-        {
-            threadPool.enqueue([this, &res] {
-                auto db_handler = acquire_db_handler();
-                Json::Value menu = db_handler->query("SELECT * FROM menu_items");
-                release_db_handler(std::move(db_handler));
-                
-                res.set_content(menu.toStyledString(), "application/json");
-            });
-        });
-
-        // 示例路由：创建订单（使用线程池处理）
-        server.Post("/order", [&](const httplib::Request& req, httplib::Response& res) 
-        {
-            // 包装任务
-            auto task_ptr = std::make_shared<std::packaged_task<std::string()>>([this, body = req.body]() {
-                std::cout << "/order request body: " << body << std::endl;
-
-                Json::Value order = parse_json(body);
-                std::string userName = order["user_name"].asString();
-                std::string orderId = order["order_id"].asString();
-                std::string productName = order["product_name"].asString();
-                double price = order["price"].asDouble();
-
-                std::cout << "/order userName: " << userName << std::endl;
-                std::cout << "/order orderId: " << orderId << std::endl;
-                std::cout << "/order productName: " << productName << std::endl;
-                std::cout << "/order price: " << price << std::endl;
-
-                // todo：数据库处理
-
-                // 直接返回订单数据
-                Json::Value response;
-                response["user_name"] = userName;
-                response["orderId"] = orderId;
-                response["productName"] = productName;
-                response["price"] = price;
-                std::cout << "/order response: " << response.toStyledString() <<std::endl;
-                
-                return response.toStyledString();
-            });
-
-            // 获取future并提交任务
-            std::future<std::string> result_future = task_ptr->get_future();
-            // 投入线程池
-            threadPool.enqueue([task_ptr] {
-                (*task_ptr)();
-            });
-
-            // 获取结果并设置响应
-            try {
-                std::string result = result_future.get();
-                std::cout << "/order task result: " << result << std::endl;
-                res.set_content(result, "application/json");
-            } catch (const std::exception& e) {
-                res.status = 500;
-                res.set_content("{\"error\":\"" + std::string(e.what()) + "\"}", "application/json");
-            }
-        });
-    }
-
-    Json::Value RestServer::parse_json(const std::string& jsonStr) 
-    {
-        Json::Value root;
-        Json::CharReaderBuilder builder;
-        std::string errors;
-        std::istringstream json_stream(jsonStr);
-        
-        if (!Json::parseFromStream(builder, json_stream, &root, &errors)) 
-        {
-            throw std::runtime_error("JSON parse error: " + errors);
-        }
-
-        return root;
-    }
-}
+}  // namespace TakeAwayPlatform 结束

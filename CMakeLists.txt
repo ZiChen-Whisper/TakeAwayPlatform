@@ -81,6 +81,9 @@ include_directories(
     ${INCLUDE_DIR}
     ${SOURCE_DIR}/database
     ${SOURCE_DIR}/http
+    ${SOURCE_DIR}/services
+    ${SOURCE_DIR}/middleware
+    ${SOURCE_DIR}/utils
 )
 
 # ---------- 第 6 步：添加第三方库 cpp-httplib ----------
@@ -166,7 +169,6 @@ link_directories(/opt/TakeAwayPlatform/bin/lib)
 # 但加入 GLOB 可以确保头文件改动也触发重新编译（某些 IDE 需要）
 file(GLOB_RECURSE SOURCES 
     ${SOURCE_DIR}/*.cpp
-    ${SOURCE_DIR}/utils/*.cpp
     ${SOURCE_DIR}/*.h
 )
 

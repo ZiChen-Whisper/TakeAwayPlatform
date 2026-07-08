@@ -104,4 +104,15 @@ namespace TakeAwayPlatform
         std::string database;  // 数据库名称
     };
 
+    struct JwtConfig {
+        std::string secret;       // JWT 签名密钥
+        int expire_hours = 24;    // Token 过期时间（小时）
+    };
+
+    struct ServerConfig {
+        int port = 9090;
+        int timeout = 10;
+        int thread_pool_size = 8;
+    };
+
 }  // namespace TakeAwayPlatform 结束（这里的分号可以省略，但加上更清晰）

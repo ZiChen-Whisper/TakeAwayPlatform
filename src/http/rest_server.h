@@ -156,6 +156,10 @@ namespace TakeAwayPlatform
          */
         Json::Value parse_json(const std::string& jsonStr);
 
+        // JWT 配置访问器
+        const std::string& getJwtSecret() const { return jwtSecret_; }
+        int getJwtExpireHours() const { return jwtExpireHours_; }
+
 
     private:
         /*
@@ -218,6 +222,10 @@ namespace TakeAwayPlatform
          * 这里在类定义中初始化（C++11 允许非静态成员变量有默认值）
          */
         TakeAwayPlatform::Logger& logger = Logger::getInstance();
+
+        // JWT 配置
+        std::string jwtSecret_;
+        int jwtExpireHours_ = 24;
     };
 
 }  // namespace TakeAwayPlatform 结束

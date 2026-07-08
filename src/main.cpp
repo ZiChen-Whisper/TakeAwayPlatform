@@ -122,9 +122,16 @@ void signal_handler(int signal) {
  *
  * 操作系统或调用者可以根据返回值判断程序是否正常结束
  */
-int main() {
+int main(int argc, char* argv[]) {
     std::cout << "Entry main.." << std::endl;
     std::cout.flush();
+
+    // 支持命令行参数指定配置文件路径
+    std::string configPath = "/opt/TakeAwayPlatform/config/config.json";
+    if (argc >= 2) {
+        configPath = argv[1];
+    }
+    std::cout << "Using config: " << configPath << std::endl;
 
     /*
      * 【注册信号处理函数】
@@ -236,16 +243,20 @@ int main() {
          *
          * 如果构造失败（如配置文件不存在），会抛出异常
          */
-        TakeAwayPlatform::RestServer restSrv("/opt/TakeAwayPlatform/config/config.json");
+        TakeAwayPlatform::RestServer restSrv(configPath);
 
-        std::cout << "Starting server on port 9090..." << std::endl;
+        // 读取服务器端口配置
+        Json::Value config = TakeAwayPlatform::load_config(configPath);
+        int serverPort = config["server"].get("port", 9090).asInt();
+
+        std::cout << "Starting server on port " << serverPort << "..." << std::endl;
         std::cout.flush();
-        logger.debug("Starting server on port 9090...");
+        logger.debug("Starting server on port " + std::to_string(serverPort) + "...");
         
         /*
          * 【启动服务器】
          *
-         * restSrv.start(9090);
+         * restSrv.start(serverPort);
          *
          * 在独立的线程中启动 HTTP 服务器，监听 9090 端口
          *
@@ -253,7 +264,7 @@ int main() {
          * 它创建线程后立即返回，HTTP 服务器在后台运行
          * 所以 main 函数可以继续执行后面的代码
          */
-        restSrv.start(9090);
+        restSrv.start(serverPort);
         
         /*
          * 【等待终止信号（使用条件变量，避免忙等待）】
