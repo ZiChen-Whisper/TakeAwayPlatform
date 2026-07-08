@@ -58,7 +58,7 @@ Makefile           # CMake 生成的 Makefile（编译规则文件，make 命令
 lib/cpp-httplib/build/       # cpp-httplib（HTTP库）的编译目录
 lib/jsoncpp/build/           # jsoncpp（JSON解析库）的编译目录
 lib/mysql-connector/build/   # MySQL Connector（数据库连接库）的编译目录
-lib/mysql-connector/lib/     # MySQL Connector 的二进制库文件（.so/.a），体积大且环境相关
+lib/mysql-connector/lib/
 
 # ---------- 日志文件 ----------
 # 程序运行产生的日志文件不应上传（包含运行时信息，可能含敏感数据）
