@@ -34,7 +34,8 @@ export default function CheckoutPage() {
       const res = await orderApi.createOrder({ addressId: selectedAddr, remark });
       if (res.code === 200) {
         clearCart();
-        navigate(`/orders/${res.data.id}`, { replace: true });
+        const orderId = (res.data as unknown as { orderId: number }).orderId;
+        navigate(`/orders/${orderId}`, { replace: true });
       } else {
         alert(res.message);
       }

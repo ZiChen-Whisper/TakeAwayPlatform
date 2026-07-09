@@ -202,6 +202,7 @@ ul, ol { list-style: none; }
 .flex { display: flex; }
 .flex-col { flex-direction: column; }
 .items-center { align-items: center; }
+.items-end { align-items: flex-end; }
 .justify-between { justify-content: space-between; }
 .justify-center { justify-content: center; }
 .gap-1 { gap: var(--gap-1); }
@@ -223,6 +224,7 @@ ul, ol { list-style: none; }
 .mt-4 { margin-top: var(--gap-4); }
 .mt-6 { margin-top: var(--gap-6); }
 .mb-2 { margin-bottom: var(--gap-2); }
+.mb-3 { margin-bottom: var(--gap-3); }
 .mb-4 { margin-bottom: var(--gap-4); }
 .mb-6 { margin-bottom: var(--gap-6); }
 .ml-2 { margin-left: var(--gap-2); }

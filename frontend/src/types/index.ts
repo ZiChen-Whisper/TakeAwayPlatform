@@ -19,7 +19,7 @@ export interface User {
   phone: string;
   avatar?: string;
   role: number; // 0=用户 1=商家 2=管理员
-  status: number;
+  status?: number;
   create_time?: string;
 }
 
