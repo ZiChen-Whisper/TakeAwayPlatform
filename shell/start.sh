@@ -215,3 +215,7 @@ echo -e "  停止服务:   ${BOLD}./stop.sh${NC}"
 echo -e "  检查状态:   ${BOLD}./check.sh${NC}"
 echo -e "  查看日志:   ${BOLD}tail -f /tmp/takeaway_platform.log${NC}"
 echo "============================================"
+echo ""
+echo -e "${BLUE}实时日志（按 Ctrl+C 停止查看，服务继续后台运行）:${NC}"
+echo ""
+tail -f /tmp/takeaway_platform.log /tmp/frontend.log 2>/dev/null
