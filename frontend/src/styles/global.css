@@ -216,6 +216,8 @@ ul, ol { list-style: none; }
 .text-success { color: var(--success); }
 .text-sm { font-size: var(--text-sm); }
 .text-xs { font-size: var(--text-xs); }
+.text-lg { font-size: var(--text-lg); }
+.text-xl { font-size: var(--text-xl); }
 .font-bold { font-weight: 700; }
 .mt-2 { margin-top: var(--gap-2); }
 .mt-4 { margin-top: var(--gap-4); }
@@ -223,7 +225,10 @@ ul, ol { list-style: none; }
 .mb-2 { margin-bottom: var(--gap-2); }
 .mb-4 { margin-bottom: var(--gap-4); }
 .mb-6 { margin-bottom: var(--gap-6); }
+.ml-2 { margin-left: var(--gap-2); }
+.ml-3 { margin-left: var(--gap-3); }
 .w-full { width: 100%; }
+.flex-1 { flex: 1; }
 
 /* ===== 空状态 ===== */
 .empty-state {
