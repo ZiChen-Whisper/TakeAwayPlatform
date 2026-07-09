@@ -102,3 +102,15 @@ echo "  $DEPLOY_BIN/TakeAwayPlatform $DEPLOY_CONFIG/config.json"
 echo ""
 echo "或使用项目脚本后台运行:"
 echo "  $SCRIPT_DIR/run.sh --no-build --bg $DEPLOY_CONFIG/config.json"
+echo ""
+
+# ---------- 部署前端 ----------
+echo ""
+echo "----------------------------------------"
+echo "  前端部署"
+echo "----------------------------------------"
+if [ -f "$SCRIPT_DIR/frontend-deploy.sh" ]; then
+    bash "$SCRIPT_DIR/frontend-deploy.sh"
+else
+    echo -e "  前端部署脚本不存在，跳过"
+fi

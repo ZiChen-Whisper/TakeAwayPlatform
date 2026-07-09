@@ -127,6 +127,43 @@ check_status() {
     echo "============================================"
 }
 
+# ---------- 前端检查 ----------
+check_frontend() {
+    echo ""
+    echo "【前端状态】"
+    VITE_PID=$(pgrep -f "vite" 2>/dev/null | head -1)
+    if [ -n "$VITE_PID" ]; then
+        echo -e "  ${GREEN}✓ Vite 开发服务器运行中${NC}  PID: $VITE_PID"
+
+        if command -v curl &>/dev/null; then
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "http://localhost:5173/" 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE" = "200" ]; then
+                echo -e "  ${GREEN}✓ 前端页面可访问${NC} (HTTP $HTTP_CODE)"
+            else
+                echo -e "  ${YELLOW}⚠ 前端页面响应异常${NC} (HTTP $HTTP_CODE)"
+            fi
+
+            # 检查代理是否工作
+            HTTP_CODE_API=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "http://localhost:5173/health" 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE_API" = "200" ]; then
+                echo -e "  ${GREEN}✓ API 代理正常${NC} (Vite → 后端)"
+            else
+                echo -e "  ${YELLOW}⚠ API 代理异常${NC} (HTTP $HTTP_CODE_API, 后端可能未启动)"
+            fi
+        fi
+    else
+        echo -e "  ${YELLOW}○ Vite 开发服务器未运行${NC}"
+    fi
+
+    # 检查前端构建产物
+    FRONTEND_DIST="$PROJECT_ROOT/frontend/dist"
+    if [ -f "$FRONTEND_DIST/index.html" ]; then
+        echo -e "  ${GREEN}✓ 前端构建产物存在${NC} ($FRONTEND_DIST)"
+    else
+        echo -e "  ${YELLOW}○ 前端构建产物不存在${NC} (运行 frontend-build.sh 生成)"
+    fi
+}
+
 # ---------- 快速接口测试 ----------
 quick_test() {
     echo "============================================"
@@ -184,10 +221,12 @@ elif [ "$WATCH_MODE" = true ]; then
     while true; do
         clear
         check_status
+        check_frontend
         echo ""
         echo "每5秒刷新一次..."
         sleep 5
     done
 else
     check_status
+    check_frontend
 fi

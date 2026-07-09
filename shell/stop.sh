@@ -38,6 +38,28 @@ echo "============================================"
 echo "  TakeAwayPlatform 停止服务"
 echo "============================================"
 
+# ---------- 停止前端 (Vite) ----------
+echo ""
+echo "[前端] 检查 Vite 开发服务器..."
+VITE_PIDS=$(pgrep -f "vite" 2>/dev/null)
+if [ -n "$VITE_PIDS" ]; then
+    echo "  找到 Vite 进程: $VITE_PIDS"
+    kill $VITE_PIDS 2>/dev/null || true
+    sleep 1
+    # 仍有残留则强制
+    REMAIN=$(pgrep -f "vite" 2>/dev/null)
+    if [ -n "$REMAIN" ]; then
+        kill -9 $REMAIN 2>/dev/null || true
+    fi
+    echo "  ✓ Vite 已停止"
+else
+    echo "  没有运行中的 Vite 进程"
+fi
+
+# ---------- 停止后端 ----------
+echo ""
+echo "[后端] 检查 TakeAwayPlatform..."
+
 # 收集所有相关 PID
 PIDS=$(pgrep -f "TakeAwayPlatform" 2>/dev/null)
 
