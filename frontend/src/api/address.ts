@@ -25,6 +25,6 @@ export async function deleteAddress(id: number) {
 }
 
 export async function setDefaultAddress(id: number) {
-  const { data } = await client.put<ApiResponse<null>>(`/api/addresses/${id}/default`);
+  const { data } = await client.put<ApiResponse<null>>(`/api/addresses/default/${id}`);
   return data;
 }

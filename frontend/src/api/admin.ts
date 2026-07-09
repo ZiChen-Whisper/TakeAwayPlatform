@@ -7,7 +7,7 @@ export async function getUsers(page = 1, pageSize = 20) {
 }
 
 export async function updateUserStatus(userId: number, status: number) {
-  const { data } = await client.put<ApiResponse<null>>(`/api/admin/users/${userId}/status`, { status });
+  const { data } = await client.put<ApiResponse<null>>(`/api/admin/users/status/${userId}`, { status });
   return data;
 }
 
@@ -17,7 +17,7 @@ export async function getMerchants() {
 }
 
 export async function auditMerchant(merchantId: number, status: number) {
-  const { data } = await client.put<ApiResponse<null>>(`/api/admin/merchants/${merchantId}/audit`, { status });
+  const { data } = await client.put<ApiResponse<null>>(`/api/admin/merchants/audit/${merchantId}`, { status });
   return data;
 }
 
