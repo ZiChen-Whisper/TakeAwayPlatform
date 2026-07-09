@@ -1,0 +1,15 @@
+.admin-dash-card {
+  text-align: center;
+  padding: var(--gap-8) var(--gap-4);
+}
+.admin-dash-card__val {
+  display: block;
+  font-size: 40px;
+  font-weight: 700;
+  color: var(--primary);
+  margin-bottom: var(--gap-2);
+}
+.admin-dash-card__label {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}

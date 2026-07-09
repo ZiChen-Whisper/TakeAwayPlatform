@@ -76,3 +76,4 @@ lib/mysql-connector/lib/
 # .env 是常见的环境变量文件，通常含密钥
 config/config.json.local
 .env
+node_modules/

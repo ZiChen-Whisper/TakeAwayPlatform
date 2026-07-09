@@ -1,0 +1,30 @@
+.qty-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.qty-control__btn {
+  width: 34px;
+  height: 34px;
+  border: none;
+  background: var(--bg);
+  font-size: var(--text-lg);
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.qty-control__btn:hover:not(:disabled) { background: var(--border); }
+.qty-control__btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.qty-control__val {
+  width: 40px;
+  text-align: center;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}

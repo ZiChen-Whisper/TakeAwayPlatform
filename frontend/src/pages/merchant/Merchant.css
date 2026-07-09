@@ -1,0 +1,2 @@
+/* 商家端额外样式 */
+.table-wrap { overflow-x: auto; margin-top: var(--gap-4); }
